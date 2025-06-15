@@ -1,0 +1,13 @@
+ansible_ssh_common_args: >-
+  -o ProxyCommand="ssh -i ./my-ansible-key.pem -W %h:%p ubuntu@{{ hostvars[groups['_nginx'][0]].public_ip_address }}"
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+
+ansible_host: "{{ private_ip_address }}"
+ansible_ssh_private_key_file: ./my-ansible-key.pem
+django_app_dir: /chatapp
+django_repo: https://github.com/ARPIT226/chat_app.git
+db_name: ansible_db
+db_user: ansible_user
+db_host: "{{ hostvars[groups['_mysql'][0]].ansible_host }}"
+db_port: 3306

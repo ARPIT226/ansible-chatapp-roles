@@ -1,0 +1,25 @@
+---
+- name: Configure MySQL server
+  hosts: _mysql
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - vault.yml
+  roles:
+    - mysql
+
+- name: Configure Django backend server
+  hosts: _django
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - vault.yml
+  roles:
+    - django
+
+- name: Configure Nginx as frontend reverse proxy
+  hosts: _nginx
+  become: yes
+  gather_facts: yes
+  roles:
+    - nginx

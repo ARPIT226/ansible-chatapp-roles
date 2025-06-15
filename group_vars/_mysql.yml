@@ -1,0 +1,12 @@
+ansible_ssh_common_args: >-
+  -o ProxyCommand="ssh -i ./my-ansible-key.pem -W %h:%p ubuntu@{{ hostvars[groups['_nginx'][0]].public_ip_address }}"
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+
+mysql_db_name: ansible_db
+mysql_root_password: "Jodhpur@21"
+mysql_user_password: "Jodhpur@21"
+mysql_root_user: root
+mysql_user: ansible_user
+ansible_host: "{{ private_ip_address }}"
+ansible_ssh_private_key_file: ./my-ansible-key.pem

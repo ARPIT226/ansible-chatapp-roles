@@ -1,0 +1,48 @@
+- name: install pymysql
+  apt:
+    name: python3-pymysql
+    state: present
+
+- name: install mysql
+  apt:
+    name: mysql-server
+    state: present
+    update_cache: yes
+
+- name: running status of mysql
+  service:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Allow MySQL to listen on all interfaces
+  lineinfile:
+    path: /etc/mysql/mysql.conf.d/mysqld.cnf
+    regexp: "^bind-address"
+    line: "bind-address = 0.0.0.0"
+    state: present
+  notify: Restart MySQL
+
+- name: Set MySQL root password using sudo mysql
+  shell: >
+    sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;"
+  args:
+    executable: /bin/bash
+  ignore_errors: true  # Optional: skip if already set
+
+- name: create mysql database
+  community.mysql.mysql_db:
+    name: "{{ mysql_db_name }}"
+    state: present
+    login_user: "{{ mysql_root_user }}"
+    login_password: "{{ mysql_root_password }}"
+
+- name: create mysql user
+  community.mysql.mysql_user:
+    name: "{{ mysql_user }}"
+    password: "{{ mysql_user_password }}"
+    priv: "{{ mysql_db_name }}.*:ALL"
+    state: present
+    host: "%"
+    login_user: "{{ mysql_root_user }}"
+    login_password: "{{ mysql_root_password }}"

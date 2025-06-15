@@ -1,0 +1,23 @@
+plugin: amazon.aws.aws_ec2
+strict: false
+regions:
+  - eu-west-2
+filters:
+  instance-state-name: running
+  tag:Name: [nginx, django, mysql]
+keyed_groups:
+  - key: tags.Name
+    prefix: "_"
+    separator: ""
+hostnames:
+  - private-ip-address
+compose:
+  ansible_user: "ubuntu"
+  ansible_ssh_private_key_file: "./my-ansible-key.pem"
+  key_file_path: "./my-ansible-key.pem"
+  ansible_ssh_common_args: >-
+    {% if tags.Name != 'nginx' %}
+    -o ProxyCommand="ssh -i ./my-ansible-key.pem -W %h:%p ubuntu@{{ hostvars[groups['_nginx'][0]].public_ip_address }}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    {% else %}
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    {% endif %}

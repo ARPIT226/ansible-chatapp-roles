@@ -1,0 +1,248 @@
+---
+- name: create vpc and subnets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vault.yml
+
+  vars:
+    region: eu-west-2
+    vpc_cidr: "10.0.0.0/16"
+    public_subnets:
+      - { cidr: "10.0.1.0/24", az: "eu-west-2a", name: "public-1a" }
+      - { cidr: "10.0.2.0/24", az: "eu-west-2b", name: "public-1b" }
+    private_subnets:
+      - { cidr: "10.0.3.0/24", az: "eu-west-2a", name: "private-1a" }
+      - { cidr: "10.0.4.0/24", az: "eu-west-2b", name: "private-1b" }
+    key_name: my-ansible-key
+    key_file: "./my-ansible-key.pem"
+    ami: "ami-051fd0ca694aa2379"
+
+  tasks:
+    - name: create key-pair
+      amazon.aws.ec2_key:
+        name: "{{key_name}}"
+        region: "{{region}}"
+        state: present
+        file_name: "{{key_file}}"
+      no_log: true
+      register: keypair
+
+    - name: Set permissions on private key file
+      ansible.builtin.file:
+        path: "{{key_file}}"
+        mode: "0400"
+
+    - name: Set key file as fact
+      set_fact:
+        key_file_path: "{{ key_file }}"
+
+    - name: create vpc
+      amazon.aws.ec2_vpc_net:
+        name: "myvpc"
+        cidr_block: "{{ vpc_cidr }}"
+        region: "{{ region }}"
+      register: myvpc
+
+    - name: create public subnets
+      amazon.aws.ec2_vpc_subnet:
+        vpc_id: "{{ myvpc.vpc.id }}"
+        cidr: "{{ item.cidr }}"
+        az: "{{ item.az }}"
+        map_public: true
+        state: present
+        region: "{{ region }}"
+        tags:
+          Name: "{{ item.name }}"
+      loop: "{{ public_subnets }}"
+      register: public_subnets_results
+
+    - name: create private subnets
+      amazon.aws.ec2_vpc_subnet:
+        vpc_id: "{{ myvpc.vpc.id }}"
+        cidr: "{{ item.cidr }}"
+        az: "{{ item.az }}"
+        map_public: false
+        state: present
+        region: "{{ region }}"
+        tags:
+          Name: "{{ item.name }}"
+      loop: "{{ private_subnets }}"
+      register: private_subnets_results
+
+    - name: create igw
+      amazon.aws.ec2_vpc_igw:
+        vpc_id: "{{ myvpc.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "my-igw"
+      register: igw
+
+    - name: create nat
+      amazon.aws.ec2_vpc_nat_gateway:
+        subnet_id: "{{ public_subnets_results.results[0].subnet.id }}"
+        wait: true
+        state: present
+        region: "{{ region }}"
+        if_exist_do_not_create: true
+        tags:
+          Name: "my-nat"
+      register: nat
+
+    - name: create public rt
+      amazon.aws.ec2_vpc_route_table:
+        vpc_id: "{{ myvpc.vpc.id }}"
+        region: "{{ region }}"
+        tags:
+          Name: "public-rt"
+        subnets: "{{ public_subnets_results.results | map(attribute='subnet.id') | list }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw.gateway_id }}"
+      register: public_rt
+
+    - name: create private rt
+      amazon.aws.ec2_vpc_route_table:
+        vpc_id: "{{ myvpc.vpc.id }}"
+        region: "{{ region }}"
+        tags:
+          Name: "private-rt"
+        subnets: "{{ private_subnets_results.results | map(attribute='subnet.id') | list }}"
+        routes:
+          - dest: 0.0.0.0/0
+            nat_gateway_id: "{{ nat.nat_gateway_id }}"
+      register: private_rt
+
+    - name: create security group for nginx
+      amazon.aws.ec2_security_group:
+        name: nginx_sg
+        description: security group for nginx
+        vpc_id: "{{myvpc.vpc.id}}"
+        tags:
+          Name: "nginx-sg"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: 0.0.0.0/0
+
+    - name: create security group for django
+      amazon.aws.ec2_security_group:
+        name: django_sg
+        description: security group for django
+        vpc_id: "{{myvpc.vpc.id}}"
+        tags:
+          Name: "django-sg"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+
+          - proto: tcp
+            from_port: 8000
+            to_port: 8000
+            cidr_ip: 0.0.0.0/0
+
+          - proto: tcp
+            from_port: 3306
+            to_port: 3306
+            cidr_ip: 0.0.0.0/0
+
+    - name: create security group for mysql
+      amazon.aws.ec2_security_group:
+        name: mysql_sg
+        description: security group for mysql
+        vpc_id: "{{myvpc.vpc.id}}"
+        tags:
+          Name: "mysql-sg"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+
+          - proto: tcp
+            from_port: 3306
+            to_port: 3306
+            cidr_ip: 0.0.0.0/0
+
+    - name: launch nginx server
+      amazon.aws.ec2_instance:
+        name: nginx
+        key_name: "{{key_name}}"
+        instance_type: t2.micro
+        image_id: "{{ami}}"
+        vpc_subnet_id: "{{public_subnets_results.results[0].subnet.id}}"
+        security_group: nginx_sg
+        region: "{{region}}"
+        wait: true
+        tags:
+          Name: nginx
+        network_interfaces:
+          - assign_public_ip: true
+      register: nginx_instance
+
+    - name: Wait for SSH to be available on nginx
+      ansible.builtin.wait_for:
+        port: 22
+        delay: 5
+        timeout: 120
+        host: "{{ nginx_instance.instances[0].public_ip_address }}"
+      delegate_to: localhost
+
+    - name: launch django server
+      amazon.aws.ec2_instance:
+        name: django
+        key_name: "{{key_name}}"
+        instance_type: t2.micro
+        image_id: "{{ami}}"
+        vpc_subnet_id: "{{private_subnets_results.results[0].subnet.id}}"
+        security_group: django_sg
+        region: "{{region}}"
+        tags:
+          Name: django
+        wait: true
+      register: django_instance
+
+    - name: launch mysql server
+      amazon.aws.ec2_instance:
+        name: mysql
+        key_name: "{{key_name}}"
+        instance_type: t2.micro
+        image_id: "{{ami}}"
+        vpc_subnet_id: "{{private_subnets_results.results[0].subnet.id}}"
+        security_group: mysql_sg
+        region: "{{region}}"
+        tags:
+          Name: mysql
+        wait: true
+      register: mysql_instance
+
+#    - name: Write inventory.ini file for future use
+#      ansible.builtin.copy:
+#        dest: ./inventory.ini
+#        content: |
+#          [nginx]
+#          {{ nginx_instance.instances[0].public_ip_address }}
+#
+#          [django]
+#          {{ django_instance.instances[0].private_ip_address }} ansible_ssh_common_args='-o ProxyCommand="ssh -i my-ansible-key.pem -W %h:%p ubuntu@{{ nginx_instance.instances[0].public_ip_address }}"'
+#
+#         [mysql]
+#          {{ mysql_instance.instances[0].private_ip_address }} ansible_ssh_common_args='-o ProxyCommand="ssh -i my-ansible-key.pem -W %h:%p ubuntu@{{ nginx_instance.instances[0].public_ip_address }}"'
+#
+#          [all:vars]
+#          ansible_user=ubuntu
+#          ansible_ssh_private_key_file=./my-ansible-key.pem
+    - name: Wait for instances to initialize
+      ansible.builtin.wait_for:
+        timeout: 60
+      delegate_to: localhost
