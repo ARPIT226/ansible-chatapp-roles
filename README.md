@@ -1,4 +1,4 @@
-## Dir structure
+## Directory structure
 <img width="431" alt="image" src="https://github.com/user-attachments/assets/9dd11318-9f3a-4133-9432-c100e14cb4b8" />
 
 ## Play recap
